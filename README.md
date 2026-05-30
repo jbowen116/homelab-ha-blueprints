@@ -10,6 +10,8 @@ Home Assistant blueprints for products running in my homelab. Organized by integ
   - Alert when the mower is lifted mid-mow
 - **[`zooz/`](zooz/)** — Blueprints for [Zooz](https://www.getzooz.com/) Z-Wave devices. Requires the `zwave_js` integration.
   - ZEN32 scene controller — universal button + LED group logic
+- **[`notifications/`](notifications/)** — Integration-agnostic blueprints for actionable notifications via the Companion App.
+  - Appliance finished — home/away/focus-mode branches + actionable buttons (acknowledge / remind in 30m / 1h / when home)
 
 More products will land here over time. Each subdirectory has its own README with per-blueprint details, inputs, and one-click "Import to HA" badges.
 

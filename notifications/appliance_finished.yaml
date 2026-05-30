@@ -1,0 +1,249 @@
+blueprint:
+  name: Appliance finished — notify with actions
+  description: >
+    Sends a smart, actionable notification when an appliance finishes
+    running (a binary sensor transitions from `on` to `off`). Designed for
+    iOS / the Home Assistant Companion App, but the action handlers work
+    on Android too.
+
+    **Branches:**
+
+    - **Person home, focus mode on** (iOS Focus / Do Not Disturb represented
+      as a `binary_sensor`) → waits until focus clears, then notifies.
+    - **Person home, focus off or no focus sensor configured** → notifies
+      immediately.
+    - **Person away** → notifies immediately with an "away" copy and a
+      "remind when home" action button.
+
+    **Notification actions:** Acknowledge / Remind in 30 min / Remind in
+    1 h / Remind when home. The "remind when home" action only fires once
+    the person is actually home **and** focus is off (or not configured).
+
+    **Requirements:**
+    - A `binary_sensor` that reports `on` while the appliance is running
+      and `off` when it stops.
+    - A `person` entity for the home/away branch.
+    - A `notify` service (typically the Companion App, e.g.
+      `notify.mobile_app_iphone`).
+    - **Optional:** a `binary_sensor` representing focus mode / DND. Use
+      e.g. the Companion App's focus sensor on iOS, or an `input_boolean`
+      you toggle manually.
+
+    Customize per appliance via the title / message inputs.
+  domain: automation
+  source_url: https://github.com/jbowen116/homelab-ha-blueprints/blob/main/notifications/appliance_finished.yaml
+  input:
+    monitored_entity:
+      name: Appliance "running" binary sensor
+      description: A `binary_sensor` that is `on` while the appliance runs.
+      selector:
+        entity:
+          domain: binary_sensor
+    person_entity:
+      name: Person to notify about
+      description: Determines the home / away branch.
+      selector:
+        entity:
+          domain: person
+    notify_target:
+      name: Notify service
+      description: e.g. `notify.mobile_app_iphone`. Full service name.
+      selector:
+        text:
+    focus_sensor:
+      name: Focus mode binary sensor (optional)
+      description: >
+        Binary sensor that is `on` when focus mode / DND is active.
+        Leave blank to ignore focus mode (notifications fire
+        immediately when home).
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+
+    title_home:
+      name: Notification title (home)
+      default: "Appliance finished"
+      selector:
+        text:
+    message_home:
+      name: Notification message (home)
+      default: "The appliance is done."
+      selector:
+        text:
+    title_away:
+      name: Notification title (away)
+      default: "Appliance finished"
+      selector:
+        text:
+    message_away:
+      name: Notification message (away)
+      default: "The appliance has stopped."
+      selector:
+        text:
+
+    action_ack:
+      name: "Action ID — Acknowledge"
+      description: >
+        Should be unique per appliance if you stamp this blueprint out
+        multiple times (otherwise tapping "Acknowledge" on one
+        notification triggers handlers for every appliance).
+      default: "ACK_APPLIANCE"
+      selector:
+        text:
+    action_remind_30:
+      name: "Action ID — Remind in 30m"
+      default: "REMIND_30"
+      selector:
+        text:
+    action_remind_60:
+      name: "Action ID — Remind in 1h"
+      default: "REMIND_60"
+      selector:
+        text:
+    action_remind_home:
+      name: "Action ID — Remind when home"
+      default: "REMIND_HOME"
+      selector:
+        text:
+
+mode: parallel
+max: 10
+
+variables:
+  person: !input person_entity
+  focus: !input focus_sensor
+  notify_target: !input notify_target
+  title_home: !input title_home
+  message_home: !input message_home
+  title_away: !input title_away
+  message_away: !input message_away
+  action_ack: !input action_ack
+  action_remind_30: !input action_remind_30
+  action_remind_60: !input action_remind_60
+  action_remind_home: !input action_remind_home
+
+triggers:
+  - trigger: state
+    entity_id: !input monitored_entity
+    from: "on"
+    to: "off"
+    id: appliance_finished
+  - trigger: event
+    event_type: mobile_app_notification_action
+    id: notification_action
+
+actions:
+  - choose:
+      ###########################################################
+      # 1. APPLIANCE FINISHED
+      ###########################################################
+      - conditions: "{{ trigger.id == 'appliance_finished' }}"
+        sequence:
+          - choose:
+              # PERSON HOME, focus mode active → wait for focus to clear
+              - conditions:
+                  - condition: state
+                    entity_id: !input person_entity
+                    state: "home"
+                  - condition: template
+                    value_template: "{{ focus != '' and is_state(focus, 'on') }}"
+                sequence:
+                  - wait_for_trigger:
+                      - trigger: template
+                        value_template: "{{ focus == '' or is_state(focus, 'off') }}"
+                  - action: !input notify_target
+                    data:
+                      title: "{{ title_home }}"
+                      message: "{{ message_home }}"
+                      data:
+                        push:
+                          interruption-level: time-sensitive
+                          sound: default
+                        actions:
+                          - action: "{{ action_ack }}"
+                            title: Acknowledge
+                          - action: "{{ action_remind_30 }}"
+                            title: Remind in 30m
+                          - action: "{{ action_remind_60 }}"
+                            title: Remind in 1h
+
+              # PERSON HOME, focus off or no focus sensor → notify now
+              - conditions:
+                  - condition: state
+                    entity_id: !input person_entity
+                    state: "home"
+                sequence:
+                  - action: !input notify_target
+                    data:
+                      title: "{{ title_home }}"
+                      message: "{{ message_home }}"
+                      data:
+                        push:
+                          interruption-level: time-sensitive
+                          sound: default
+                        actions:
+                          - action: "{{ action_ack }}"
+                            title: Acknowledge
+                          - action: "{{ action_remind_30 }}"
+                            title: Remind in 30m
+                          - action: "{{ action_remind_60 }}"
+                            title: Remind in 1h
+
+              # PERSON AWAY
+              - conditions:
+                  - condition: state
+                    entity_id: !input person_entity
+                    state: "not_home"
+                sequence:
+                  - action: !input notify_target
+                    data:
+                      title: "{{ title_away }}"
+                      message: "{{ message_away }}"
+                      data:
+                        push:
+                          interruption-level: time-sensitive
+                          sound: default
+                        actions:
+                          - action: "{{ action_ack }}"
+                            title: Acknowledge
+                          - action: "{{ action_remind_home }}"
+                            title: Remind when home
+
+      ###########################################################
+      # 2. NOTIFICATION ACTION HANDLER
+      ###########################################################
+      - conditions: "{{ trigger.id == 'notification_action' }}"
+        sequence:
+          - choose:
+              - conditions: "{{ trigger.event.data.action == action_ack }}"
+                sequence:
+                  - action: logbook.log
+                    data:
+                      name: Appliance
+                      message: Acknowledged
+              - conditions: "{{ trigger.event.data.action == action_remind_30 }}"
+                sequence:
+                  - delay: "00:30:00"
+                  - action: !input notify_target
+                    data:
+                      title: Reminder
+                      message: "{{ title_home }} finished 30 minutes ago."
+              - conditions: "{{ trigger.event.data.action == action_remind_60 }}"
+                sequence:
+                  - delay: "01:00:00"
+                  - action: !input notify_target
+                    data:
+                      title: Reminder
+                      message: "{{ title_home }} finished 1 hour ago."
+              - conditions: "{{ trigger.event.data.action == action_remind_home }}"
+                sequence:
+                  - wait_for_trigger:
+                      - trigger: template
+                        value_template: >
+                          {{ is_state(person, 'home')
+                             and (focus == '' or is_state(focus, 'off')) }}
+                  - action: !input notify_target
+                    data:
+                      title: Reminder
+                      message: "{{ title_home }} finished while you were away."
