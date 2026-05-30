@@ -1,0 +1,213 @@
+blueprint:
+  name: Zooz ZEN32 — Universal button + LED group logic
+  description: >
+    Universal button + LED logic for a Zooz ZEN32 scene controller (Z-Wave).
+    Pick a button and a set of light/switch entities, and this blueprint
+    will:
+
+    - **Short press** — toggle the entire group (any-on → all off; else all on).
+    - **Long press** — force the entire group ON.
+    - **LED reflects collective state** — white = all on, yellow = some on,
+      off = all off.
+
+    Works for any of the 5 buttons; the parameter mappings are derived from
+    the button number you select.
+
+    **Requirements**: a Z-Wave network with the Zooz ZEN32 included, the
+    `zwave_js` integration set up, and HA exposing the device under its
+    Z-Wave device id (not the entity registry id).
+
+    **Caveats**: this only handles ON / OFF state; brightness, colour, and
+    other dim-level state are ignored. After firing actions on the group
+    the blueprint waits 500 ms before reading collective state, so devices
+    have time to report new states back over Z-Wave.
+  domain: automation
+  source_url: https://github.com/jbowen116/homelab-ha-blueprints/blob/main/zooz/zen32_button_group.yaml
+  input:
+    device:
+      name: ZEN32 device
+      description: The Zooz ZEN32 scene controller (Z-Wave device).
+      selector:
+        device:
+          integration: zwave_js
+    button_number:
+      name: Button number (1–5)
+      description: >
+        Which button on the ZEN32 to bind. Buttons 1–4 are the small
+        buttons; button 5 is the large bottom button.
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: slider
+    target_entities:
+      name: Target entities
+      description: >
+        Lights / switches this button should control. Group state is
+        derived by counting how many of these are `on`.
+      selector:
+        entity:
+          domain:
+            - light
+            - switch
+          multiple: true
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  device: !input device
+  button_number: !input button_number
+  target_entities: !input target_entities
+  padded_key: "{{ '%03d' | format(button_number | int) }}"
+
+  led_mode_param: >
+    {% if button_number == 5 %}1
+    {% elif button_number == 1 %}2
+    {% elif button_number == 2 %}3
+    {% elif button_number == 3 %}4
+    {% elif button_number == 4 %}5
+    {% else %}2
+    {% endif %}
+
+  led_color_param: >
+    {% if button_number == 5 %}6
+    {% elif button_number == 1 %}7
+    {% elif button_number == 2 %}8
+    {% elif button_number == 3 %}9
+    {% elif button_number == 4 %}10
+    {% else %}7
+    {% endif %}
+
+  led_brightness_param: >
+    {% if button_number == 5 %}11
+    {% elif button_number == 1 %}12
+    {% elif button_number == 2 %}13
+    {% elif button_number == 3 %}14
+    {% elif button_number == 4 %}15
+    {% else %}12
+    {% endif %}
+
+triggers:
+  - trigger: event
+    event_type: zwave_js_value_notification
+    event_data:
+      device_id: !input device
+    id: button_event
+  - trigger: state
+    entity_id: !input target_entities
+    id: entity_state
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.id == 'button_event'
+                 and trigger.event.data.property_key == padded_key
+                 and trigger.event.data.value in ['KeyPressed','KeyHeldDown'] }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ trigger.event.data.value == 'KeyHeldDown' }}"
+                sequence:
+                  - action: homeassistant.turn_on
+                    target:
+                      entity_id: !input target_entities
+            default:
+              - variables:
+                  any_on: >
+                    {{ target_entities
+                       | select('is_state', 'on')
+                       | list
+                       | count > 0 }}
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ any_on }}"
+                    sequence:
+                      - action: homeassistant.turn_off
+                        target:
+                          entity_id: !input target_entities
+                default:
+                  - action: homeassistant.turn_on
+                    target:
+                      entity_id: !input target_entities
+
+  - delay:
+      milliseconds: 500
+
+  - variables:
+      on_count: >
+        {{ target_entities
+           | select('is_state', 'on')
+           | list
+           | count }}
+      total_count: >
+        {{ target_entities | count }}
+      collective_state: >
+        {% if total_count == 0 %}
+          off
+        {% elif on_count == 0 %}
+          off
+        {% elif on_count == total_count %}
+          full
+        {% else %}
+          partial
+        {% endif %}
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ collective_state == 'full' }}"
+        sequence:
+          - action: zwave_js.set_config_parameter
+            data:
+              device_id: !input device
+              parameter: "{{ led_color_param }}"
+              value: 0
+          - delay: { milliseconds: 150 }
+          - action: zwave_js.set_config_parameter
+            data:
+              device_id: !input device
+              parameter: "{{ led_brightness_param }}"
+              value: 2
+          - delay: { milliseconds: 150 }
+          - action: zwave_js.set_config_parameter
+            data:
+              device_id: !input device
+              parameter: "{{ led_mode_param }}"
+              value: 3
+
+      - conditions:
+          - condition: template
+            value_template: "{{ collective_state == 'partial' }}"
+        sequence:
+          - action: zwave_js.set_config_parameter
+            data:
+              device_id: !input device
+              parameter: "{{ led_color_param }}"
+              value: 5
+          - delay: { milliseconds: 150 }
+          - action: zwave_js.set_config_parameter
+            data:
+              device_id: !input device
+              parameter: "{{ led_brightness_param }}"
+              value: 1
+          - delay: { milliseconds: 150 }
+          - action: zwave_js.set_config_parameter
+            data:
+              device_id: !input device
+              parameter: "{{ led_mode_param }}"
+              value: 3
+
+    default:
+      - action: zwave_js.set_config_parameter
+        data:
+          device_id: !input device
+          parameter: "{{ led_mode_param }}"
+          value: 2
