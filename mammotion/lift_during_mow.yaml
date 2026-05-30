@@ -1,0 +1,56 @@
+blueprint:
+  name: Mammotion — Alert when mower is lifted mid-mow
+  description: >
+    Fires when the lift sensor (error code 2801) trips while the mower is
+    actively mowing — indicates someone or something has picked the mower
+    up off the ground mid-task. Does not fire when the mower is lifted on
+    the dock for maintenance.
+  domain: automation
+  source_url: https://github.com/jbowen116/homelab-ha-blueprints/blob/main/mammotion/lift_during_mow.yaml
+  input:
+    mower:
+      name: Mower
+      description: Your Mammotion `lawn_mower` entity.
+      selector:
+        entity:
+          domain: lawn_mower
+          integration: mammotion
+    notify_service:
+      name: Notify service
+      description: Notification service to call (e.g. `notify.mobile_app_iphone`).
+      selector:
+        text:
+    lift_error_code:
+      name: Lift error code
+      description: >
+        The error code that fires when the mower's lift sensor trips.
+        Default `2801` is correct for Yuka Mini 2; adjust for other models
+        if needed.
+      default: "2801"
+      selector:
+        text:
+
+mode: single
+
+variables:
+  mower_entity: !input mower
+  slug: "{{ mower_entity.split('.')[1] }}"
+  lift_code: !input lift_error_code
+
+triggers:
+  - trigger: template
+    value_template: >
+      {% set s = mower_entity.split('.')[1] %}
+      {{ states('sensor.' ~ s ~ '_last_error_code') == lift_code }}
+
+conditions:
+  - condition: template
+    value_template: "{{ is_state(mower_entity, 'mowing') }}"
+
+actions:
+  - action: !input notify_service
+    data:
+      title: Mower was lifted
+      message: >-
+        Lift sensor triggered mid-mow. Battery
+        {{ states('sensor.' ~ slug ~ '_battery') }}%.

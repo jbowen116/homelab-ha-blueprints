@@ -1,0 +1,129 @@
+blueprint:
+  name: Mammotion — Alert when mower is stranded
+  description: >
+    Sends a critical notification when the mower is stranded off-dock with
+    no obvious explanation — either it hit a known "stuck" error code, or
+    it's been off-dock and idle for a sustained period while the user is
+    not actively driving it from the app.
+
+    Requires PyMammotion ≥ 0.7.131 and the `binary_sensor.{mower}_app_interactive`
+    entity from Mammotion-HA (see https://github.com/mikey0000/Mammotion-HA/pull/767).
+  domain: automation
+  source_url: https://github.com/jbowen116/homelab-ha-blueprints/blob/main/mammotion/stranded_alert.yaml
+  input:
+    mower:
+      name: Mower
+      description: Your Mammotion `lawn_mower` entity.
+      selector:
+        entity:
+          domain: lawn_mower
+          integration: mammotion
+    notify_service:
+      name: Notify service
+      description: Notification service to call (e.g. `notify.mobile_app_iphone`).
+      selector:
+        text:
+    battery_threshold:
+      name: Battery threshold (%)
+      description: >
+        Off-dock-idle path only fires when battery is below this. A
+        full-battery off-dock-idle reading is almost certainly noise.
+      default: 95
+      selector:
+        number:
+          min: 30
+          max: 99
+          unit_of_measurement: "%"
+          mode: slider
+    off_dock_idle_minutes:
+      name: Off-dock-idle duration (minutes)
+      description: >
+        How long the mower must look idle off-dock before firing the
+        template path. Longer = fewer false alarms, slower real alerts.
+      default: 15
+      selector:
+        number:
+          min: 2
+          max: 60
+          unit_of_measurement: min
+          mode: slider
+    error_codes:
+      name: Hard error codes
+      description: >
+        Error codes that should trigger the alert immediately. Defaults
+        cover the known Yuka Mini 2 "stuck" cases.
+      default:
+        - "1010"
+        - "1017"
+        - "1100"
+        - "1203"
+        - "1008"
+      selector:
+        object:
+    use_critical_ios_sound:
+      name: Use iOS critical-alert sound
+      description: >
+        If your `notify_service` is the iOS companion app, this adds the
+        critical-alert payload that bypasses silent mode. Leave on by
+        default; turn off for non-iOS notifiers.
+      default: true
+      selector:
+        boolean:
+
+mode: single
+
+variables:
+  mower_entity: !input mower
+  error_codes: !input error_codes
+  battery_threshold: !input battery_threshold
+  use_critical: !input use_critical_ios_sound
+  slug: "{{ mower_entity.split('.')[1] }}"
+
+triggers:
+  - trigger: template
+    id: error_trigger
+    value_template: >
+      {% set s = mower_entity.split('.')[1] %}
+      {{ states('sensor.' ~ s ~ '_last_error_code') in error_codes }}
+  - trigger: template
+    id: off_dock_idle
+    value_template: >
+      {% set s = mower_entity.split('.')[1] %}
+      {{ states('sensor.' ~ s ~ '_activity_mode') == 'MODE_READY'
+         and is_state('binary_sensor.' ~ s ~ '_charging', 'off')
+         and states('sensor.' ~ s ~ '_device_position_type') != 'CHARGE_ON' }}
+    for:
+      minutes: !input off_dock_idle_minutes
+
+conditions:
+  - condition: or
+    conditions:
+      - condition: trigger
+        id: error_trigger
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: off_dock_idle
+          - condition: template
+            value_template: "{{ not is_state(mower_entity, 'docked') }}"
+          - condition: template
+            value_template: >
+              {{ (states('sensor.' ~ slug ~ '_battery') | int(0)) < (battery_threshold | int(95)) }}
+          - condition: template
+            value_template: >
+              {{ is_state('binary_sensor.' ~ slug ~ '_app_interactive', 'off') }}
+
+actions:
+  - action: !input notify_service
+    data:
+      title: Mower needs help
+      message: >-
+        {% if trigger.id == 'off_dock_idle' %}
+        Off-dock and idle. Battery {{ states('sensor.' ~ slug ~ '_battery') }}%.
+        {% else %}
+        {{ states('sensor.' ~ slug ~ '_last_error') }}
+        (code {{ states('sensor.' ~ slug ~ '_last_error_code') }}).
+        Battery {{ states('sensor.' ~ slug ~ '_battery') }}%.
+        {% endif %}
+      data: >-
+        {{ {"push": {"sound": {"critical": 1, "volume": 1.0}}} if use_critical else {} }}

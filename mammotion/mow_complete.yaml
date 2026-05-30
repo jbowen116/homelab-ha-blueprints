@@ -1,0 +1,54 @@
+blueprint:
+  name: Mammotion — Notify when mower finishes
+  description: >
+    Sends a notification when the lawn mower returns to the dock for real
+    (not a mid-mow recharge pause). Uses a debounce because mid-mow
+    low-battery pauses transition through `paused`, not `docked`.
+  domain: automation
+  source_url: https://github.com/jbowen116/homelab-ha-blueprints/blob/main/mammotion/mow_complete.yaml
+  input:
+    mower:
+      name: Mower
+      description: Your Mammotion `lawn_mower` entity.
+      selector:
+        entity:
+          domain: lawn_mower
+          integration: mammotion
+    notify_service:
+      name: Notify service
+      description: >
+        Notification service to call (e.g. `notify.mobile_app_iphone`).
+        Just the service name, no leading `notify.` if your service is
+        already namespaced.
+      selector:
+        text:
+    debounce_minutes:
+      name: Debounce minutes
+      description: >
+        How long the mower must stay docked before firing. 2 minutes filters
+        out brief mid-mow dock visits.
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 30
+          unit_of_measurement: min
+          mode: slider
+
+mode: single
+
+triggers:
+  - trigger: state
+    entity_id: !input mower
+    to: docked
+    for:
+      minutes: !input debounce_minutes
+
+actions:
+  - variables:
+      slug: "{{ (states[trigger.entity_id].object_id) if trigger.entity_id else '' }}"
+  - action: !input notify_service
+    data:
+      title: Mower finished
+      message: >-
+        Battery now {{ states('sensor.' ~ slug ~ '_battery') }}%.
