@@ -47,17 +47,45 @@ blueprint:
           max: 60
           unit_of_measurement: min
           mode: slider
+    paused_stuck_minutes:
+      name: Paused-stuck duration (minutes)
+      description: >
+        Safety-net path: how long the mower must stay in `paused` state
+        with charging off before firing. Catches stuck-mid-mow scenarios
+        whose error code is not in the hard-error list. Discriminates
+        against legitimate mid-mow low-battery pauses, which transition
+        to charging within ~3 minutes of pausing on a dock arrival.
+      default: 15
+      selector:
+        number:
+          min: 5
+          max: 60
+          unit_of_measurement: min
+          mode: slider
+    paused_battery_threshold:
+      name: Paused-stuck battery threshold (%)
+      description: >
+        Paused-stuck path only fires when battery is below this. A
+        mid-mow pause with full battery is almost certainly intentional.
+      default: 50
+      selector:
+        number:
+          min: 10
+          max: 95
+          unit_of_measurement: "%"
+          mode: slider
     error_codes:
       name: Hard error codes
       description: >
         Error codes that should trigger the alert immediately. Defaults
         cover the known Yuka Mini 2 "stuck" cases.
       default:
+        - "1008"
         - "1010"
         - "1017"
+        - "1032"
         - "1100"
         - "1203"
-        - "1008"
       selector:
         object:
     use_critical_ios_sound:
@@ -76,6 +104,7 @@ variables:
   mower_entity: !input mower
   error_codes: !input error_codes
   battery_threshold: !input battery_threshold
+  paused_battery_threshold: !input paused_battery_threshold
   use_critical: !input use_critical_ios_sound
   slug: "{{ mower_entity.split('.')[1] }}"
 
@@ -94,6 +123,12 @@ triggers:
          and states('sensor.' ~ s ~ '_device_position_type') != 'CHARGE_ON' }}
     for:
       minutes: !input off_dock_idle_minutes
+  - trigger: state
+    id: paused_stuck
+    entity_id: !input mower
+    to: paused
+    for:
+      minutes: !input paused_stuck_minutes
 
 conditions:
   - condition: or
@@ -112,6 +147,19 @@ conditions:
           - condition: template
             value_template: >
               {{ is_state('binary_sensor.' ~ slug ~ '_app_interactive', 'off') }}
+      - condition: and
+        conditions:
+          - condition: trigger
+            id: paused_stuck
+          - condition: template
+            value_template: >
+              {{ is_state('binary_sensor.' ~ slug ~ '_charging', 'off') }}
+          - condition: template
+            value_template: >
+              {{ (states('sensor.' ~ slug ~ '_battery') | int(0)) < (paused_battery_threshold | int(50)) }}
+          - condition: template
+            value_template: >
+              {{ is_state('binary_sensor.' ~ slug ~ '_app_interactive', 'off') }}
 
 actions:
   - action: !input notify_service
@@ -120,6 +168,8 @@ actions:
       message: >-
         {% if trigger.id == 'off_dock_idle' %}
         Off-dock and idle. Battery {{ states('sensor.' ~ slug ~ '_battery') }}%.
+        {% elif trigger.id == 'paused_stuck' %}
+        Paused off-dock and not charging, likely stranded. Battery {{ states('sensor.' ~ slug ~ '_battery') }}%.
         {% else %}
         {{ states('sensor.' ~ slug ~ '_last_error') }}
         (code {{ states('sensor.' ~ slug ~ '_last_error_code') }}).

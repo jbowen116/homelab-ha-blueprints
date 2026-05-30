@@ -16,14 +16,15 @@ Sends a notification when the mower returns to the dock **for real** — i.e. no
 
 ### `stranded_alert.yaml` — Alert when the mower is stranded
 
-Critical alert (iOS-aware) when the mower is stuck. Fires in either of two cases:
+Critical alert (iOS-aware) when the mower is stuck. Fires on any of three paths:
 
-1. **Hard error codes** — defaults cover the known Yuka Mini 2 "stuck" cases (`1010`, `1017`, `1100`, `1203`, `1008`). Fires immediately.
-2. **Off-dock idle** — mower has been off-dock and idle for a sustained duration (default 15 min), battery is below threshold (default 95 %), and the user is not actively driving from the app.
+1. **Hard error codes** — defaults cover the known Yuka Mini 2 "stuck" cases (`1008`, `1010`, `1017`, `1032`, `1100`, `1203`). Fires immediately.
+2. **Off-dock idle** — mower has been off-dock and idle (`MODE_READY` + not charging + not `CHARGE_ON`) for a sustained duration (default 15 min), battery is below threshold (default 95 %), and the user is not actively driving from the app.
+3. **Paused-stuck safety net** — mower has been in `paused` state for ≥ 15 min, not charging, battery below threshold (default 50 %), and the user is not actively driving from the app. Catches stuck-mid-mow scenarios whose error code is not in the hard-error list. Discriminates against legitimate mid-mow low-battery pauses, which transition to charging within ~3 min of dock arrival.
 
-The off-dock-idle path requires the **`binary_sensor.{mower}_app_interactive`** entity from Mammotion-HA — added in [Mammotion-HA#767](https://github.com/mikey0000/Mammotion-HA/pull/767). Without that sensor the blueprint will not fire the off-dock-idle path (the condition will always be false), but the error-code path still works.
+The off-dock-idle and paused-stuck paths require the **`binary_sensor.{mower}_app_interactive`** entity from Mammotion-HA — added in [Mammotion-HA#767](https://github.com/mikey0000/Mammotion-HA/pull/767). Without that sensor those paths will not fire (their condition will always be false), but the error-code path still works.
 
-**Inputs**: mower entity, notify service, battery threshold, off-dock-idle duration, error code list, iOS critical-alert toggle.
+**Inputs**: mower entity, notify service, battery threshold, off-dock-idle duration, paused-stuck duration, paused-stuck battery threshold, error code list, iOS critical-alert toggle.
 
 [![Open in HA](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fjbowen116%2Fhomelab-ha-blueprints%2Fblob%2Fmain%2Fmammotion%2Fstranded_alert.yaml)
 
