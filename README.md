@@ -12,6 +12,8 @@ Home Assistant blueprints for products running in my homelab. Organized by integ
   - ZEN32 scene controller — universal button + LED group logic
 - **[`notifications/`](notifications/)** — Integration-agnostic blueprints for actionable notifications via the Companion App.
   - Appliance finished — home/away/focus-mode branches + actionable buttons (acknowledge / remind in 30m / 1h / when home)
+- **[`utilities/`](utilities/)** — One-off scripts that aren't blueprints but live here so they're easy to find.
+  - Bubble Card pop-up migrator — converts pre-v3.2.0 pop-ups (wrapped in `vertical-stack`) to the new standalone format
 
 More products will land here over time. Each subdirectory has its own README with per-blueprint details, inputs, and one-click "Import to HA" badges.
 
